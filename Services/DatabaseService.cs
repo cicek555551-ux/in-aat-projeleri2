@@ -63,12 +63,13 @@ CREATE TABLE IF NOT EXISTS proje_fotograflari (
             await using var tx = await con.BeginTransactionAsync();
 
             var insert = new MySqlCommand(
-                "INSERT INTO projeler(proje_adi,proje_aciklamasi,proje_degeri) VALUES(@ad,@acik,@deger); SELECT LAST_INSERT_ID();",
+                "INSERT INTO projeler(proje_adi,proje_aciklamasi,proje_degeri) VALUES(@ad,@acik,@deger);",
                 con, tx);
             insert.Parameters.AddWithValue("@ad", p.Name);
             insert.Parameters.AddWithValue("@acik", p.Desc);
             insert.Parameters.AddWithValue("@deger", p.Value);
-            var projectId = Convert.ToInt32(await insert.ExecuteScalarAsync());
+            await insert.ExecuteNonQueryAsync();
+            var projectId = checked((int)insert.LastInsertedId);
 
             for (int i=1;i<=3;i++)
             {
@@ -109,27 +110,38 @@ CREATE TABLE IF NOT EXISTS proje_fotograflari (
         var map = new Dictionary<int, Project>();
         while (await r.ReadAsync())
         {
-            var id = r.GetInt32("id");
+            var idOrd = r.GetOrdinal("id");
+            var adOrd = r.GetOrdinal("proje_adi");
+            var acikOrd = r.GetOrdinal("proje_aciklamasi");
+            var degerOrd = r.GetOrdinal("proje_degeri");
+            var tarihOrd = r.GetOrdinal("eklenme_tarihi");
+            var fotoIdOrd = r.GetOrdinal("foto_id");
+            var dosyaOrd = r.GetOrdinal("dosya_adi");
+            var mimeOrd = r.GetOrdinal("mime_type");
+            var siraOrd = r.GetOrdinal("sira_no");
+
+            var id = r.GetInt32(idOrd);
             if (!map.TryGetValue(id, out var p))
             {
                 p = new Project {
-                    Id=id,
-                    ProjeAdi=r.GetString("proje_adi"),
-                    ProjeAciklamasi=r.IsDBNull("proje_aciklamasi") ? "" : r.GetString("proje_aciklamasi"),
-                    ProjeDegeri=r.IsDBNull("proje_degeri") ? 0 : r.GetDecimal("proje_degeri"),
-                    EklenmeTarihi=r.GetDateTime("eklenme_tarihi")
+                    Id = id,
+                    ProjeAdi = r.GetString(adOrd),
+                    ProjeAciklamasi = r.IsDBNull(acikOrd) ? "" : r.GetString(acikOrd),
+                    ProjeDegeri = r.IsDBNull(degerOrd) ? 0 : r.GetDecimal(degerOrd),
+                    EklenmeTarihi = r.GetDateTime(tarihOrd)
                 };
-                map[id]=p;
+                map[id] = p;
                 result.Add(p);
             }
-            if (!r.IsDBNull("foto_id"))
+
+            if (!r.IsDBNull(fotoIdOrd))
             {
                 p.Fotograflar.Add(new ProjectPhoto {
-                    Id=r.GetInt32("foto_id"),
-                    ProjeId=id,
-                    DosyaAdi=r.IsDBNull("dosya_adi") ? "" : r.GetString("dosya_adi"),
-                    MimeType=r.IsDBNull("mime_type") ? "image/jpeg" : r.GetString("mime_type"),
-                    SiraNo=r.IsDBNull("sira_no") ? 0 : r.GetInt32("sira_no")
+                    Id = r.GetInt32(fotoIdOrd),
+                    ProjeId = id,
+                    DosyaAdi = r.IsDBNull(dosyaOrd) ? "" : r.GetString(dosyaOrd),
+                    MimeType = r.IsDBNull(mimeOrd) ? "image/jpeg" : r.GetString(mimeOrd),
+                    SiraNo = r.IsDBNull(siraOrd) ? 0 : r.GetInt32(siraOrd)
                 });
             }
         }
@@ -150,9 +162,13 @@ CREATE TABLE IF NOT EXISTS proje_fotograflari (
         cmd.Parameters.AddWithValue("@id", id);
         await using var r = await cmd.ExecuteReaderAsync();
         if (!await r.ReadAsync()) return null;
-        return ((byte[])r["fotograf"],
-                r.IsDBNull("mime_type") ? "image/jpeg" : r.GetString("mime_type"),
-                r.IsDBNull("dosya_adi") ? "foto.jpg" : r.GetString("dosya_adi"));
+        var fotoOrd = r.GetOrdinal("fotograf");
+        var mimeOrd = r.GetOrdinal("mime_type");
+        var nameOrd = r.GetOrdinal("dosya_adi");
+
+        return ((byte[])r.GetValue(fotoOrd),
+                r.IsDBNull(mimeOrd) ? "image/jpeg" : r.GetString(mimeOrd),
+                r.IsDBNull(nameOrd) ? "foto.jpg" : r.GetString(nameOrd));
     }
 
     public async Task<int> CreateProjectAsync(ProjectForm model, IEnumerable<IFormFile> photos)
@@ -162,11 +178,12 @@ CREATE TABLE IF NOT EXISTS proje_fotograflari (
         await using var tx = await con.BeginTransactionAsync();
 
         var cmd = new MySqlCommand(
-            "INSERT INTO projeler(proje_adi,proje_aciklamasi,proje_degeri) VALUES(@a,@d,@v); SELECT LAST_INSERT_ID();", con, tx);
+            "INSERT INTO projeler(proje_adi,proje_aciklamasi,proje_degeri) VALUES(@a,@d,@v);", con, tx);
         cmd.Parameters.AddWithValue("@a", model.ProjeAdi.Trim());
         cmd.Parameters.AddWithValue("@d", model.ProjeAciklamasi?.Trim() ?? "");
         cmd.Parameters.AddWithValue("@v", model.ProjeDegeri);
-        var id = Convert.ToInt32(await cmd.ExecuteScalarAsync());
+        await cmd.ExecuteNonQueryAsync();
+        var id = checked((int)cmd.LastInsertedId);
 
         await InsertPhotosAsync(con, tx, id, photos);
         await tx.CommitAsync();
